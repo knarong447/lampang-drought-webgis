@@ -573,11 +573,15 @@ function renderTrendChart() {
 
   if (points.length === 0) {
     if (state.trendChart) { state.trendChart.destroy(); state.trendChart = null; }
+    const seenCols = state.logRows.length ? Object.keys(state.logRows[0]) : [];
     wrap.innerHTML =
       `<p style="color:var(--muted);font-size:13px;">ยังไม่มีข้อมูลย้อนหลังสำหรับ "${state.metric.label}" ` +
       `ในแท็บ <span class="mono">tmd_run_log</span> — แท็บนี้จะได้แถวใหม่ทุกครั้งที่รัน notebook ถึงเซลล์บันทึกประวัติ ` +
       `(เซลล์ที่ 9) เมื่อรันซ้ำหลายรอบ เส้นแนวโน้มจะเริ่มปรากฏ ตรวจสอบว่าแท็บนี้มีแถวข้อมูลอยู่จริงในชีต และ ` +
-      `<span class="mono">WRITE_LOG = True</span> ใน notebook</p>`;
+      `<span class="mono">WRITE_LOG = True</span> ใน notebook</p>` +
+      `<p class="mono" style="font-size:11px;color:var(--muted);margin-top:10px;">DEBUG — ` +
+      `พบ ${state.logRows.length} แถว, คอลัมน์ที่อ่านได้: [${seenCols.join(", ") || "ไม่พบคอลัมน์เลย"}], ` +
+      `กำลังหาคีย์: "${key}"</p>`;
     return;
   }
 
