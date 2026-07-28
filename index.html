@@ -344,6 +344,33 @@ let state = {
 };
 
 /* ---------------------------- Google Sheet fetch (JSONP via gviz) --------------------------- */
+// gviz's own "is row 1 a header?" heuristic can misfire when a sheet has very few data rows
+// (observed with tmd_run_log at 1 row) — it then returns all-empty column labels and the real
+// header text sitting in the first data row instead. Passing headers=1 in the URL does not
+// reliably override this in every case, so we detect and self-correct on the client instead.
+function parseGvizTable(resp) {
+  let cols = resp.table.cols.map(c => (c.label || "").trim());
+  let dataRows = resp.table.rows;
+
+  const noLabelsDetected = cols.every(c => !c);
+  if (noLabelsDetected && dataRows.length > 0) {
+    cols = dataRows[0].c.map(cell => {
+      if (!cell) return "";
+      const raw = cell.v !== undefined && cell.v !== null ? cell.v : cell.f;
+      return (raw !== undefined && raw !== null ? String(raw) : "").trim();
+    });
+    dataRows = dataRows.slice(1);
+  }
+
+  return dataRows.map(r => {
+    const obj = {};
+    r.c.forEach((cell, i) => {
+      obj[cols[i]] = cell ? (cell.f !== undefined && cell.f !== null ? cell.f : cell.v) : null;
+    });
+    return obj;
+  });
+}
+
 function fetchSheetRows(sheetName) {
   return new Promise((resolve, reject) => {
     if (!CONFIG.SPREADSHEET_ID || CONFIG.SPREADSHEET_ID.includes("PASTE_YOUR")) {
@@ -366,15 +393,7 @@ function fetchSheetRows(sheetName) {
     window[cbName] = function (resp) {
       cleanup();
       try {
-        const cols = resp.table.cols.map(c => (c.label || c.id || "").trim());
-        const rows = resp.table.rows.map(r => {
-          const obj = {};
-          r.c.forEach((cell, i) => {
-            obj[cols[i]] = cell ? (cell.f !== undefined && cell.f !== null ? cell.f : cell.v) : null;
-          });
-          return obj;
-        });
-        resolve(rows);
+        resolve(parseGvizTable(resp));
       } catch (e) {
         reject(e);
       }
