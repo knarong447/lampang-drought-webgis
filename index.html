@@ -344,24 +344,21 @@ let state = {
 };
 
 /* ---------------------------- Google Sheet fetch (JSONP via gviz) --------------------------- */
-// gviz's own "is row 1 a header?" heuristic can misfire when a sheet has very few data rows
-// (observed with tmd_run_log at 1 row) — it then returns all-empty column labels and the real
-// header text sitting in the first data row instead. Passing headers=1 in the URL does not
-// reliably override this in every case, so we detect and self-correct on the client instead.
+// gviz's own "is row 1 a header?" heuristic is unreliable at low row counts (observed with
+// tmd_run_log at 1 row: it sometimes strips the header row from `rows` itself but leaves
+// column labels empty, sometimes the reverse). Rather than depend on that guess in either
+// direction, we force headers=0 in the URL (gviz never treats any row specially — every
+// physical row, including the literal header text, comes back in `rows`) and always take
+// row 0 ourselves as the header. This is deterministic regardless of row count.
 function parseGvizTable(resp) {
-  let cols = resp.table.cols.map(c => (c.label || "").trim());
-  let dataRows = resp.table.rows;
-
-  const noLabelsDetected = cols.every(c => !c);
-  if (noLabelsDetected && dataRows.length > 0) {
-    cols = dataRows[0].c.map(cell => {
-      if (!cell) return "";
-      const raw = cell.v !== undefined && cell.v !== null ? cell.v : cell.f;
-      return (raw !== undefined && raw !== null ? String(raw) : "").trim();
-    });
-    dataRows = dataRows.slice(1);
-  }
-
+  const headerRow = resp.table.rows[0];
+  if (!headerRow) return [];
+  const cols = headerRow.c.map(cell => {
+    if (!cell) return "";
+    const raw = cell.v !== undefined && cell.v !== null ? cell.v : cell.f;
+    return (raw !== undefined && raw !== null ? String(raw) : "").trim();
+  });
+  const dataRows = resp.table.rows.slice(1);
   return dataRows.map(r => {
     const obj = {};
     r.c.forEach((cell, i) => {
@@ -400,7 +397,7 @@ function fetchSheetRows(sheetName) {
     };
 
     const url = `https://docs.google.com/spreadsheets/d/${CONFIG.SPREADSHEET_ID}/gviz/tq` +
-      `?tqx=out:json;responseHandler:${cbName}&headers=1&sheet=${encodeURIComponent(sheetName)}`;
+      `?tqx=out:json;responseHandler:${cbName}&headers=0&sheet=${encodeURIComponent(sheetName)}`;
     const script = document.createElement("script");
     script.id = cbName;
     script.src = url;
