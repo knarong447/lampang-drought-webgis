@@ -344,22 +344,30 @@ let state = {
 };
 
 /* ---------------------------- Google Sheet fetch (JSONP via gviz) --------------------------- */
-// gviz's own "is row 1 a header?" heuristic is unreliable at low row counts (observed with
-// tmd_run_log at 1 row: it sometimes strips the header row from `rows` itself but leaves
-// column labels empty, sometimes the reverse). Rather than depend on that guess in either
-// direction, we force headers=0 in the URL (gviz never treats any row specially — every
-// physical row, including the literal header text, comes back in `rows`) and always take
-// row 0 ourselves as the header. This is deterministic regardless of row count.
-function parseGvizTable(resp) {
-  const headerRow = resp.table.rows[0];
-  if (!headerRow) return [];
-  const cols = headerRow.c.map(cell => {
-    if (!cell) return "";
-    const raw = cell.v !== undefined && cell.v !== null ? cell.v : cell.f;
-    return (raw !== undefined && raw !== null ? String(raw) : "").trim();
-  });
-  const dataRows = resp.table.rows.slice(1);
-  return dataRows.map(r => {
+// gviz's own header handling has proven unreliable for tmd_run_log specifically: with only a
+// few data rows, it (a) silently strips the real header row from `rows` regardless of the
+// `headers=` URL parameter we send (that parameter appears to have no effect on this endpoint
+// any more), and (b) leaves `cols[].label` empty at low row counts. Since we can no longer
+// recover header text from the response at all in that state, we fall back to a column order
+// we already know for certain — it's exactly what the notebook writes — rather than guessing.
+// This self-heals once the log has enough rows for Google's own detection to work normally.
+const LOG_FALLBACK_COLUMNS = [
+  "collected_at_bkk", "updated_at", "rows", "cols", "aoi",
+  "rainfall_mm_10day_mean", "rainfall_mm_10day_min", "rainfall_mm_10day_max",
+  "eto_mm_day_mean", "eto_mm_day_min", "eto_mm_day_max",
+  "eto_total_mm_10day_mean", "eto_total_mm_10day_min", "eto_total_mm_10day_max",
+  "mai_mean", "mai_min", "mai_max",
+  "spei_mean", "spei_min", "spei_max",
+  "tmax_avg_c_mean", "tmax_avg_c_min", "tmax_avg_c_max",
+  "tmin_avg_c_mean", "tmin_avg_c_min", "tmin_avg_c_max",
+];
+
+function parseGvizTable(resp, fallbackColumns) {
+  const labelCols = resp.table.cols.map(c => (c.label || "").trim());
+  const hasLabels = labelCols.some(c => c);
+  const cols = hasLabels ? labelCols : (fallbackColumns || resp.table.cols.map((c, i) => c.id || String(i)));
+
+  return resp.table.rows.map(r => {
     const obj = {};
     r.c.forEach((cell, i) => {
       obj[cols[i]] = cell ? (cell.f !== undefined && cell.f !== null ? cell.f : cell.v) : null;
@@ -368,7 +376,7 @@ function parseGvizTable(resp) {
   });
 }
 
-function fetchSheetRows(sheetName) {
+function fetchSheetRows(sheetName, fallbackColumns) {
   return new Promise((resolve, reject) => {
     if (!CONFIG.SPREADSHEET_ID || CONFIG.SPREADSHEET_ID.includes("PASTE_YOUR")) {
       reject(new Error("NO_SPREADSHEET_ID"));
@@ -390,14 +398,14 @@ function fetchSheetRows(sheetName) {
     window[cbName] = function (resp) {
       cleanup();
       try {
-        resolve(parseGvizTable(resp));
+        resolve(parseGvizTable(resp, fallbackColumns));
       } catch (e) {
         reject(e);
       }
     };
 
     const url = `https://docs.google.com/spreadsheets/d/${CONFIG.SPREADSHEET_ID}/gviz/tq` +
-      `?tqx=out:json;responseHandler:${cbName}&headers=0&sheet=${encodeURIComponent(sheetName)}`;
+      `?tqx=out:json;responseHandler:${cbName}&headers=1&sheet=${encodeURIComponent(sheetName)}`;
     const script = document.createElement("script");
     script.id = cbName;
     script.src = url;
@@ -658,7 +666,7 @@ async function loadAll() {
   try {
     const [tambonRows, logRows, gridRows] = await Promise.all([
       fetchSheetRows(CONFIG.SHEET_TAMBON),
-      fetchSheetRows(CONFIG.SHEET_LOG),
+      fetchSheetRows(CONFIG.SHEET_LOG, LOG_FALLBACK_COLUMNS),
       fetchSheetRows(CONFIG.SHEET_GRID),
     ]);
     state.tambonRows = tambonRows;
