@@ -547,34 +547,55 @@ function renderPointsLayer() {
 }
 
 /* ---------------------------- Trend chart --------------------------- */
+function ensureTrendCanvas(wrap) {
+  if (!document.getElementById("trend-chart")) {
+    wrap.innerHTML = '<canvas id="trend-chart"></canvas>';
+  }
+}
+
 function renderTrendChart() {
+  const wrap = document.getElementById("trend-chart-wrap");
+
   if (typeof Chart === "undefined") {
+    if (state.trendChart) { state.trendChart.destroy(); state.trendChart = null; }
     console.warn("Chart.js ยังไม่โหลด — ข้ามการวาดกราฟแนวโน้ม (ส่วนอื่นของหน้ายังทำงานปกติ)");
-    document.getElementById("trend-chart-wrap").innerHTML =
+    wrap.innerHTML =
       '<p style="color:var(--muted);font-size:13px;">ไม่สามารถโหลดไลบรารีกราฟได้ (Chart.js) — ส่วนอื่นของหน้ายังใช้งานได้ปกติ ลองรีเฟรชหน้าเว็บอีกครั้ง</p>';
     return;
   }
-  const rows = [...state.logRows].sort((a, b) =>
-    new Date(a.collected_at_bkk) - new Date(b.collected_at_bkk)
-  );
-  const labels = rows.map(r => (r.collected_at_bkk || "").toString().slice(0, 16));
-  const key = state.metric.key + "_mean";
-  const data = rows.map(r => num(r[key]));
 
+  const key = state.metric.key + "_mean";
+  const points = [...state.logRows]
+    .filter(r => r.collected_at_bkk)
+    .sort((a, b) => new Date(a.collected_at_bkk) - new Date(b.collected_at_bkk))
+    .map(r => ({ label: r.collected_at_bkk.toString().slice(0, 16), value: num(r[key]) }))
+    .filter(p => p.value !== null);
+
+  if (points.length === 0) {
+    if (state.trendChart) { state.trendChart.destroy(); state.trendChart = null; }
+    wrap.innerHTML =
+      `<p style="color:var(--muted);font-size:13px;">ยังไม่มีข้อมูลย้อนหลังสำหรับ "${state.metric.label}" ` +
+      `ในแท็บ <span class="mono">tmd_run_log</span> — แท็บนี้จะได้แถวใหม่ทุกครั้งที่รัน notebook ถึงเซลล์บันทึกประวัติ ` +
+      `(เซลล์ที่ 9) เมื่อรันซ้ำหลายรอบ เส้นแนวโน้มจะเริ่มปรากฏ ตรวจสอบว่าแท็บนี้มีแถวข้อมูลอยู่จริงในชีต และ ` +
+      `<span class="mono">WRITE_LOG = True</span> ใน notebook</p>`;
+    return;
+  }
+
+  ensureTrendCanvas(wrap);
   const ctx = document.getElementById("trend-chart").getContext("2d");
   if (state.trendChart) state.trendChart.destroy();
   state.trendChart = new Chart(ctx, {
     type: "line",
     data: {
-      labels,
+      labels: points.map(p => p.label),
       datasets: [{
         label: state.metric.label,
-        data,
+        data: points.map(p => p.value),
         borderColor: "#2C6E8C",
         backgroundColor: "rgba(44,110,140,0.12)",
         fill: true,
         tension: 0.3,
-        pointRadius: 3,
+        pointRadius: points.length === 1 ? 5 : 3,
       }],
     },
     options: {
