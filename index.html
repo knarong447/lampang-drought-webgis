@@ -381,7 +381,7 @@ function fetchSheetRows(sheetName) {
     };
 
     const url = `https://docs.google.com/spreadsheets/d/${CONFIG.SPREADSHEET_ID}/gviz/tq` +
-      `?tqx=out:json;responseHandler:${cbName}&sheet=${encodeURIComponent(sheetName)}`;
+      `?tqx=out:json;responseHandler:${cbName}&headers=1&sheet=${encodeURIComponent(sheetName)}`;
     const script = document.createElement("script");
     script.id = cbName;
     script.src = url;
