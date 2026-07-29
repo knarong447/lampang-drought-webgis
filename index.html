@@ -344,30 +344,45 @@ let state = {
 };
 
 /* ---------------------------- Google Sheet fetch (JSONP via gviz) --------------------------- */
-// gviz's own header handling has proven unreliable for tmd_run_log specifically: with only a
-// few data rows, it (a) silently strips the real header row from `rows` regardless of the
-// `headers=` URL parameter we send (that parameter appears to have no effect on this endpoint
-// any more), and (b) leaves `cols[].label` empty at low row counts. Since we can no longer
-// recover header text from the response at all in that state, we fall back to a column order
-// we already know for certain — it's exactly what the notebook writes — rather than guessing.
-// This self-heals once the log has enough rows for Google's own detection to work normally.
-const LOG_FALLBACK_COLUMNS = [
-  "collected_at_bkk", "updated_at", "rows", "cols", "aoi",
+// gviz's own header handling is unreliable for tmd_run_log specifically: with only a few data
+// rows it silently strips the header row from `rows` (confirmed via a raw-response diagnostic)
+// and leaves `cols[].label` empty, regardless of any `headers=` URL parameter. Since header text
+// cannot be recovered from the response at all in that state, we fall back to a known column
+// order instead of guessing. IMPORTANT: the existing row in tmd_run_log was written by an
+// earlier notebook version that logged 6 metrics (no eto_mm_day) — 23 columns total. A notebook
+// run after the eto_mm_day fix will log 7 metrics (26 columns). Both shapes are handled below,
+// selected by matching the actual number of cells in the row. This self-heals once the log
+// accumulates enough rows for Google's own label detection to work normally.
+const LOG_COLUMNS_BASE = ["collected_at_bkk", "updated_at", "rows", "cols", "aoi"];
+// 23-column shape — verified against the actual live row (pre eto_mm_day fix)
+const LOG_COLUMNS_23 = [...LOG_COLUMNS_BASE,
+  "rainfall_mm_10day_mean", "rainfall_mm_10day_min", "rainfall_mm_10day_max",
+  "eto_total_mm_10day_mean", "eto_total_mm_10day_min", "eto_total_mm_10day_max",
+  "mai_mean", "mai_min", "mai_max",
+  "spei_mean", "spei_min", "spei_max",
+  "tmax_avg_c_mean", "tmax_avg_c_min", "tmax_avg_c_max",
+  "tmin_avg_c_mean", "tmin_avg_c_min", "tmin_avg_c_max"];
+// 26-column shape — matches the notebook after the eto_mm_day fix
+const LOG_COLUMNS_26 = [...LOG_COLUMNS_BASE,
   "rainfall_mm_10day_mean", "rainfall_mm_10day_min", "rainfall_mm_10day_max",
   "eto_mm_day_mean", "eto_mm_day_min", "eto_mm_day_max",
   "eto_total_mm_10day_mean", "eto_total_mm_10day_min", "eto_total_mm_10day_max",
   "mai_mean", "mai_min", "mai_max",
   "spei_mean", "spei_min", "spei_max",
   "tmax_avg_c_mean", "tmax_avg_c_min", "tmax_avg_c_max",
-  "tmin_avg_c_mean", "tmin_avg_c_min", "tmin_avg_c_max",
-];
+  "tmin_avg_c_mean", "tmin_avg_c_min", "tmin_avg_c_max"];
 
-function parseGvizTable(resp, fallbackColumns) {
+function parseGvizTable(resp, fallbackColumnsByLength) {
   const labelCols = resp.table.cols.map(c => (c.label || "").trim());
   const hasLabels = labelCols.some(c => c);
-  const cols = hasLabels ? labelCols : (fallbackColumns || resp.table.cols.map((c, i) => c.id || String(i)));
 
   return resp.table.rows.map(r => {
+    let cols = labelCols;
+    if (!hasLabels) {
+      const n = r.c.length;
+      cols = (fallbackColumnsByLength && fallbackColumnsByLength[n])
+        || resp.table.cols.map((c, i) => c.id || String(i));
+    }
     const obj = {};
     r.c.forEach((cell, i) => {
       obj[cols[i]] = cell ? (cell.f !== undefined && cell.f !== null ? cell.f : cell.v) : null;
@@ -376,7 +391,7 @@ function parseGvizTable(resp, fallbackColumns) {
   });
 }
 
-function fetchSheetRows(sheetName, fallbackColumns) {
+function fetchSheetRows(sheetName, fallbackColumnsByLength) {
   return new Promise((resolve, reject) => {
     if (!CONFIG.SPREADSHEET_ID || CONFIG.SPREADSHEET_ID.includes("PASTE_YOUR")) {
       reject(new Error("NO_SPREADSHEET_ID"));
@@ -398,7 +413,7 @@ function fetchSheetRows(sheetName, fallbackColumns) {
     window[cbName] = function (resp) {
       cleanup();
       try {
-        resolve(parseGvizTable(resp, fallbackColumns));
+        resolve(parseGvizTable(resp, fallbackColumnsByLength));
       } catch (e) {
         reject(e);
       }
@@ -666,7 +681,10 @@ async function loadAll() {
   try {
     const [tambonRows, logRows, gridRows] = await Promise.all([
       fetchSheetRows(CONFIG.SHEET_TAMBON),
-      fetchSheetRows(CONFIG.SHEET_LOG, LOG_FALLBACK_COLUMNS),
+      fetchSheetRows(CONFIG.SHEET_LOG, {
+        [LOG_COLUMNS_23.length]: LOG_COLUMNS_23,
+        [LOG_COLUMNS_26.length]: LOG_COLUMNS_26,
+      }),
       fetchSheetRows(CONFIG.SHEET_GRID),
     ]);
     state.tambonRows = tambonRows;
